@@ -67,6 +67,7 @@ public class Program {
         builder.Services.AddScoped<ITextFileStore, PhysicalTextFileStore>();
 
         builder.Services.AddScoped<IDocsContentProvider, StaticWebAssetDocsContentProvider>();
+        builder.Services.AddUserDocs(yamlPath);
 
         builder.Services.AddGitServices(builder.Configuration, yamlPath);
 

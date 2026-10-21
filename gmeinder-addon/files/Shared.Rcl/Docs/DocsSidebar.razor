@@ -1,0 +1,431 @@
+@using Microsoft.Extensions.DependencyInjection
+@inject IServiceProvider Services
+@inject IDocsContentProvider Docs
+@inject NavigationManager Nav
+
+<div class="space-y-4" data-testid="docs-sidebar">
+
+    @if (_store is not null)
+    {
+        <div class="border border-zinc-800 rounded p-4 bg-zinc-900"
+             data-testid="add-page-root">
+
+            <div class="text-zinc-100 mb-3"
+                 data-testid="add-page-title">
+                Add Page
+            </div>
+
+            <div class="flex gap-2"
+                 data-testid="add-page-form">
+
+                <input
+                    class="flex-1 min-w-0 bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-600"
+                    placeholder="page name"
+                    title="Optional: the page is named after the file if left empty"
+                    @bind="_newName"
+                    @bind:event="oninput"
+                    data-testid="add-page-input"/>
+
+                <label for="add-page-file"
+                       class="px-4 py-2 text-sm rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-100 cursor-pointer @(_uploading ? "opacity-50 pointer-events-none" : "")"
+                       title="Choose a Markdown (.md) file"
+                       data-testid="add-page-button">
+                    add
+                </label>
+                <InputFile id="add-page-file"
+                           class="hidden"
+                           accept=".md,text/markdown"
+                           OnChange="UploadAsync"/>
+            </div>
+
+            @if (_addError is not null)
+            {
+                <div class="mt-2 text-sm text-red-400"
+                     data-testid="add-page-error">
+                    @_addError
+                </div>
+            }
+        </div>
+    }
+
+    <div class="border border-zinc-800 rounded-md p-4 bg-zinc-900/40">
+
+        <input class="w-full bg-zinc-800 text-zinc-200 p-2 rounded border border-zinc-700 text-sm"
+               placeholder="Search docs…"
+               title="Matches page names and page text"
+               data-testid="docs-search-input"
+               value="@Filter"
+               @oninput="OnFilterChanged"/>
+
+        <div class="mt-3 space-y-4 max-h-[60vh] overflow-auto pr-1">
+
+            <section data-testid="docs-section-rackpeek">
+                <button type="button"
+                        class="w-full flex items-center gap-2 text-xs text-zinc-500 uppercase tracking-wider hover:text-zinc-300 transition"
+                        aria-expanded="@_rackPeekOpen"
+                        data-testid="docs-section-rackpeek-toggle"
+                        @onclick="() => _rackPeekOpen = !_rackPeekOpen">
+                    <span class="w-3 text-zinc-600">@(_rackPeekOpen ? "▾" : "▸")</span>
+                    RackPeek Pages
+                </button>
+
+                @if (_rackPeekOpen)
+                {
+                    <div class="mt-2 space-y-1 pl-5">
+                        @if (IndexLoading)
+                        {
+                            <div class="text-zinc-500 text-sm">loading index…</div>
+                        }
+                        else if (IndexNotFound)
+                        {
+                            <div class="text-zinc-500 text-sm">docs index not found</div>
+                        }
+                        else
+                        {
+                            var builtIn = Search(Items, BuiltInKey).ToList();
+                            if (builtIn.Count == 0)
+                            {
+                                <div class="text-zinc-600 text-sm">no matches</div>
+                            }
+
+                            foreach (var (item, snippet) in builtIn)
+                            {
+                                <div>
+                                    <NavLink href="@($"docs/{ToRouteSlug(item)}")"
+                                             class="block text-sm text-zinc-300 hover:text-emerald-300 transition"
+                                             activeClass="text-emerald-400 font-semibold"
+                                             data-testid="@($"docs-index-link-{Sanitize(item)}")">
+                                        @DisplayName(item)
+                                    </NavLink>
+                                    @Snippet(snippet)
+                                </div>
+                            }
+                        }
+                    </div>
+                }
+            </section>
+
+            @if (_store is not null)
+            {
+                <section data-testid="docs-section-mydocs">
+                    <button type="button"
+                            class="w-full flex items-center gap-2 text-xs text-zinc-500 uppercase tracking-wider hover:text-zinc-300 transition"
+                            aria-expanded="@_myDocsOpen"
+                            data-testid="docs-section-mydocs-toggle"
+                            @onclick="() => _myDocsOpen = !_myDocsOpen">
+                        <span class="w-3 text-zinc-600">@(_myDocsOpen ? "▾" : "▸")</span>
+                        My Docs
+                    </button>
+
+                    @if (_myDocsOpen)
+                    {
+                        <div class="mt-2 space-y-1 pl-5">
+                            @{ var mine = Search(_myDocs, MyDocKey).ToList(); }
+                            @if (mine.Count == 0)
+                            {
+                                <div class="text-zinc-600 text-sm">@(_myDocs.Count == 0 ? "no pages yet" : "no matches")</div>
+                            }
+
+                            @foreach (var (item, snippet) in mine)
+                            {
+                                var slug = ToRouteSlug(item);
+                                var isActive = IsActive(slug);
+                                <div class="group flex items-center justify-between gap-2"
+                                     data-testid="@($"docs-mydocs-item-{Sanitize(item)}")">
+                                    <NavLink href="@($"docs/{IUserDocsStore.RoutePrefix}/{slug}")"
+                                             class="min-w-0 truncate text-sm text-zinc-300 hover:text-emerald-300 transition"
+                                             activeClass="text-emerald-400 font-semibold"
+                                             data-testid="@($"docs-mydocs-link-{Sanitize(item)}")">
+                                        @DisplayName(item)
+                                    </NavLink>
+
+                                    <div class="@(isActive ? "flex" : "hidden group-hover:flex") shrink-0 gap-2">
+                                        <button data-testid="@($"rename-page-button-{Sanitize(item)}")"
+                                                class="text-xs text-blue-400 hover:text-blue-300 transition"
+                                                @onclick="() => OpenRename(item)">
+                                            Rename
+                                        </button>
+                                        <button data-testid="@($"delete-page-button-{Sanitize(item)}")"
+                                                class="text-xs text-red-400 hover:text-red-300 transition"
+                                                @onclick="() => OpenDelete(item)">
+                                            Delete
+                                        </button>
+                                    </div>
+                                </div>
+                                @Snippet(snippet)
+                            }
+                        </div>
+                    }
+                </section>
+            }
+        </div>
+    </div>
+</div>
+
+<StringValueModal
+    IsOpen="_renameOpen"
+    IsOpenChanged="v => _renameOpen = v"
+    Title="Rename page"
+    Label="Name"
+    Value="@(_target is null ? null : DisplayName(_target))"
+    OnSubmit="RenameAsync"
+    TestIdPrefix="page-rename"/>
+
+<ConfirmModal
+    IsOpen="_deleteOpen"
+    IsOpenChanged="v => _deleteOpen = v"
+    Title="Delete page"
+    ConfirmText="Delete"
+    ConfirmClass="bg-red-600 hover:bg-red-500"
+    OnConfirm="DeleteAsync"
+    TestIdPrefix="page-delete">
+    Are you sure you want to delete <strong>@(_target is null ? "" : DisplayName(_target))</strong>?
+    <br/>
+    The page's file is removed from the config volume.
+</ConfirmModal>
+
+@code {
+
+    private const long MaxUploadBytes = 1024 * 1024;
+
+    [Parameter] public IEnumerable<string> Items { get; set; } = [];
+    [Parameter] public bool IndexLoading { get; set; }
+    [Parameter] public bool IndexNotFound { get; set; }
+    [Parameter] public string Filter { get; set; } = "";
+    [Parameter] public EventCallback<string> FilterChanged { get; set; }
+
+    private IUserDocsStore? _store;
+    private IReadOnlyList<string> _myDocs = [];
+    private bool _rackPeekOpen = true;
+    private bool _myDocsOpen = true;
+
+    private string _newName = "";
+    private bool _uploading;
+    private string? _addError;
+
+    private string? _target;
+    private bool _renameOpen;
+    private bool _deleteOpen;
+
+    private readonly Dictionary<string, string> _content = new(StringComparer.OrdinalIgnoreCase);
+
+    private sealed record SnippetMatch(string Pre, string Hit, string Post);
+
+    protected override async Task OnInitializedAsync()
+    {
+        _store = Services.GetService<IUserDocsStore>();
+        await RefreshMyDocsAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        foreach (var item in Items.ToList())
+        {
+            var key = BuiltInKey(item);
+            if (_content.ContainsKey(key))
+                continue;
+
+            try
+            {
+                _content[key] = await Docs.GetAsync(item);
+            }
+            catch (FileNotFoundException)
+            {
+                _content[key] = "";
+            }
+        }
+    }
+
+    private async Task RefreshMyDocsAsync()
+    {
+        _myDocs = _store?.List() ?? [];
+        foreach (var key in _content.Keys.Where(k => k.StartsWith("my:", StringComparison.Ordinal)).ToList())
+            _content.Remove(key);
+
+        foreach (var item in _myDocs)
+        {
+            try
+            {
+                _content[MyDocKey(item)] = await _store!.GetAsync(item);
+            }
+            catch (FileNotFoundException)
+            {
+                _content[MyDocKey(item)] = "";
+            }
+        }
+    }
+
+    private Task OnFilterChanged(ChangeEventArgs e)
+    {
+        return FilterChanged.InvokeAsync(e.Value?.ToString() ?? "");
+    }
+
+    private static string BuiltInKey(string item)
+    {
+        return "rp:" + item;
+    }
+
+    private static string MyDocKey(string item)
+    {
+        return "my:" + item;
+    }
+
+    /// <summary>Pages whose name or text contains the search, with a snippet for text-only matches.</summary>
+    private IEnumerable<(string Item, SnippetMatch? Snippet)> Search(IEnumerable<string> items, Func<string, string> key)
+    {
+        var query = Filter.Trim();
+        foreach (var item in items)
+        {
+            if (query.Length == 0 || DisplayName(item).Contains(query, StringComparison.OrdinalIgnoreCase))
+            {
+                yield return (item, null);
+                continue;
+            }
+
+            if (_content.TryGetValue(key(item), out var text) && FindSnippet(text, query) is { } snippet)
+                yield return (item, snippet);
+        }
+    }
+
+    private static SnippetMatch? FindSnippet(string text, string query)
+    {
+        var at = text.IndexOf(query, StringComparison.OrdinalIgnoreCase);
+        if (at < 0)
+            return null;
+
+        var lineStart = text.LastIndexOf('\n', at) + 1;
+        var lineEnd = text.IndexOf('\n', at);
+        var line = text[lineStart..(lineEnd < 0 ? text.Length : lineEnd)];
+        var hitAt = at - lineStart;
+
+        var from = Math.Max(0, hitAt - 8);
+        var to = Math.Min(line.Length, hitAt + query.Length + 40);
+        var pre = (from > 0 ? "…" : "") + Clean(line[from..hitAt]).TrimStart('#', '>', '|', '-', '*', ' ');
+        var post = Clean(line[(hitAt + query.Length)..to]) + (to < line.Length ? "…" : "");
+        return new SnippetMatch(pre, line.Substring(hitAt, query.Length), post);
+    }
+
+    private static string Clean(string s)
+    {
+        return System.Text.RegularExpressions.Regex.Replace(
+            s.Replace("`", "").Replace("**", "").Replace('|', ' '), @"\s+", " ");
+    }
+
+    private static RenderFragment Snippet(SnippetMatch? s)
+    {
+        return s is null
+            ? _ => { }
+            : @<div class="text-xs text-zinc-500 truncate" data-testid="docs-search-snippet">@s.Pre<span class="text-emerald-300">@s.Hit</span>@s.Post</div>;
+    }
+
+    private bool IsActive(string slug)
+    {
+        var path = Nav.ToBaseRelativePath(Nav.Uri).Split('?', '#')[0];
+        return string.Equals(path, $"docs/{IUserDocsStore.RoutePrefix}/{slug}", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task UploadAsync(InputFileChangeEventArgs e)
+    {
+        _addError = null;
+        IBrowserFile file = e.File;
+
+        if (!file.Name.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+        {
+            _addError = "only Markdown (.md) files can be added";
+            return;
+        }
+
+        if (file.Size > MaxUploadBytes)
+        {
+            _addError = "file is over 1 MB";
+            return;
+        }
+
+        _uploading = true;
+        try
+        {
+            var name = string.IsNullOrWhiteSpace(_newName) ? file.Name : _newName.Trim() + ".md";
+            await using var stream = file.OpenReadStream(MaxUploadBytes);
+            var saved = await _store!.SaveAsync(name, stream);
+
+            _newName = "";
+            await RefreshMyDocsAsync();
+            _myDocsOpen = true;
+            Nav.NavigateTo($"docs/{IUserDocsStore.RoutePrefix}/{ToRouteSlug(saved)}");
+        }
+        catch (Exception ex) when (ex is IOException or ArgumentException or UnauthorizedAccessException)
+        {
+            _addError = ex.Message;
+        }
+        finally
+        {
+            _uploading = false;
+        }
+    }
+
+    private void OpenRename(string item)
+    {
+        _target = item;
+        _renameOpen = true;
+    }
+
+    private void OpenDelete(string item)
+    {
+        _target = item;
+        _deleteOpen = true;
+    }
+
+    private async Task RenameAsync(string newName)
+    {
+        if (_target is null)
+            return;
+
+        var wasActive = IsActive(ToRouteSlug(_target));
+        var renamed = await _store!.RenameAsync(_target, newName.Trim() + ".md");
+        await RefreshMyDocsAsync();
+        _target = null;
+
+        if (wasActive)
+            Nav.NavigateTo($"docs/{IUserDocsStore.RoutePrefix}/{ToRouteSlug(renamed)}");
+    }
+
+    private async Task DeleteAsync()
+    {
+        if (_target is null)
+            return;
+
+        var wasActive = IsActive(ToRouteSlug(_target));
+        await _store!.DeleteAsync(_target);
+        await RefreshMyDocsAsync();
+        _target = null;
+
+        if (wasActive)
+            Nav.NavigateTo("docs");
+    }
+
+    private static string ToRouteSlug(string path)
+    {
+        return path.EndsWith(".md", StringComparison.OrdinalIgnoreCase)
+            ? path[..^3]
+            : path;
+    }
+
+    private static string DisplayName(string path)
+    {
+        var p = path.Replace('\\', '/').Trim();
+        if (p.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+            p = p[..^3];
+
+        return p.Split('/', StringSplitOptions.RemoveEmptyEntries)
+            .LastOrDefault() ?? p;
+    }
+
+    private static string Sanitize(string value)
+    {
+        return value.Replace(" ", "-")
+            .Replace("/", "-")
+            .Replace("\\", "-")
+            .Replace(".", "-");
+    }
+
+}
